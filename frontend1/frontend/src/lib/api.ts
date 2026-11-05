@@ -103,8 +103,15 @@ export interface CustomerOrderHistoryItem {
   items?: Array<{ name?: string; item_name?: string; quantity?: number }>;
 }
 
-export function fetchMyOrders(): Promise<{ orders: CustomerOrderHistoryItem[]; message?: string }> {
-  return request<{ orders: CustomerOrderHistoryItem[]; message?: string }>("/api/my/orders");
+export interface CustomerOrderHistoryResponse {
+  orders: CustomerOrderHistoryItem[];
+  message?: string;
+  totalOrders?: number;
+  completedOrders?: number;
+}
+
+export function fetchMyOrders(): Promise<CustomerOrderHistoryResponse> {
+  return request<CustomerOrderHistoryResponse>("/api/my/orders");
 }
 
 export type KhqrBank = "ABA" | "ACLEDA" | "WING";

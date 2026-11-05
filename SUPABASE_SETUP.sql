@@ -21,6 +21,22 @@ alter table public.profiles add column if not exists email text;
 alter table public.profiles add column if not exists role text not null default 'customer';
 alter table public.profiles add column if not exists status text not null default 'active';
 alter table public.profiles add column if not exists created_at timestamptz not null default now();
+alter table public.profiles add column if not exists phone text;
+alter table public.profiles add column if not exists avatar_url text;
+
+create table if not exists public.addresses (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  label text not null,
+  address text not null,
+  icon text not null default '📍',
+  is_default boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists idx_addresses_one_default_per_user
+  on public.addresses(user_id)
+  where is_default = true;
 
 create or replace function public.is_admin_user()
 returns boolean
@@ -36,6 +52,27 @@ as $$
       and p.status = 'active'
   );
 $$;
+
+create or replace function public.prevent_customer_profile_privilege_changes()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() = old.id
+    and not public.is_admin_user()
+    and (new.role is distinct from old.role or new.status is distinct from old.status) then
+    raise exception 'Customers cannot change profile role or status';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists foodie6_guard_profile_privileges on public.profiles;
+create trigger foodie6_guard_profile_privileges
+  before update of role, status on public.profiles
+  for each row execute function public.prevent_customer_profile_privilege_changes();
 
 -- =========================
 -- CORE TABLES
@@ -330,6 +367,7 @@ select setval(pg_get_serial_sequence('public.menu_items','id'), greatest(coalesc
 -- RLS
 -- =========================
 alter table public.profiles enable row level security;
+alter table public.addresses enable row level security;
 alter table public.restaurants enable row level security;
 alter table public.categories enable row level security;
 alter table public.menu_items enable row level security;
@@ -354,11 +392,16 @@ END $$;
 
 create policy foodie6_profiles_select on public.profiles for select using (id = auth.uid() or public.is_admin_user());
 create policy foodie6_profiles_update on public.profiles for update using (public.is_admin_user()) with check (public.is_admin_user());
+create policy foodie6_profiles_insert_own on public.profiles for insert
+  with check (id = auth.uid() and role = 'customer' and status = 'active');
+create policy foodie6_profiles_update_own on public.profiles for update
+  using (id = auth.uid() and role = 'customer')
+  with check (id = auth.uid() and role = 'customer' and status = 'active');
 
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['restaurants','categories','menu_items','customers','drivers','orders','order_items','payments','reviews','promotions','platform_settings','payment_settings','notification_settings']
+  FOREACH t IN ARRAY ARRAY['restaurants','categories','menu_items','customers','drivers','orders','order_items','payments','reviews','promotions','platform_settings','payment_settings','notification_settings','addresses']
   LOOP
     EXECUTE format('create policy foodie6_%s_select on public.%I for select using (public.is_admin_user())', t, t);
     EXECUTE format('create policy foodie6_%s_insert on public.%I for insert with check (public.is_admin_user())', t, t);
@@ -366,6 +409,42 @@ BEGIN
     EXECUTE format('create policy foodie6_%s_delete on public.%I for delete using (public.is_admin_user())', t, t);
   END LOOP;
 END $$;
+
+create policy foodie6_addresses_select_own on public.addresses for select
+  using (user_id = auth.uid());
+create policy foodie6_addresses_insert_own on public.addresses for insert
+  with check (user_id = auth.uid());
+create policy foodie6_addresses_update_own on public.addresses for update
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy foodie6_addresses_delete_own on public.addresses for delete
+  using (user_id = auth.uid());
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'avatars',
+  'avatars',
+  true,
+  3145728,
+  array['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists foodie6_avatar_public_read on storage.objects;
+drop policy if exists foodie6_avatar_insert_own on storage.objects;
+drop policy if exists foodie6_avatar_update_own on storage.objects;
+drop policy if exists foodie6_avatar_delete_own on storage.objects;
+create policy foodie6_avatar_public_read on storage.objects for select to public
+  using (bucket_id = 'avatars');
+create policy foodie6_avatar_insert_own on storage.objects for insert to authenticated
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy foodie6_avatar_update_own on storage.objects for update to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy foodie6_avatar_delete_own on storage.objects for delete to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
 
 -- Helpful indexes
 create index if not exists idx_orders_created_at on public.orders(created_at desc);

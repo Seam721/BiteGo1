@@ -364,6 +364,8 @@ app.get("/api/my/orders", async (req, res) => {
     if (!phone) {
       return res.json({
         orders: [],
+        totalOrders: 0,
+        completedOrders: 0,
         message: "Add your phone number to your profile and use the same number at checkout to connect your order history.",
       });
     }
@@ -375,18 +377,30 @@ app.get("/api/my/orders", async (req, res) => {
     if (customerError) return sendDbError(res, customerError, "Could not find your customer record.");
 
     const customerIds = (customers || []).map((customer) => customer.id);
-    if (!customerIds.length) return res.json({ orders: [] });
+    if (!customerIds.length) return res.json({ orders: [], totalOrders: 0, completedOrders: 0 });
 
-    const { data: orders, error: ordersError } = await historyDb
-      .from("orders")
-      .select("id, customer_id, restaurant_id, status, subtotal, delivery_fee, discount, total, created_at, payment_method, payment_status")
-      .in("customer_id", customerIds)
-      .order("created_at", { ascending: false })
-      .limit(50);
-    if (ordersError) return sendDbError(res, ordersError, "Could not load your orders.");
+    const [ordersResult, completedResult] = await Promise.all([
+      historyDb
+        .from("orders")
+        .select("id, customer_id, restaurant_id, status, subtotal, delivery_fee, discount, total, created_at, payment_method, payment_status", { count: "exact" })
+        .in("customer_id", customerIds)
+        .order("created_at", { ascending: false })
+        .limit(50),
+      historyDb
+        .from("orders")
+        .select("id", { count: "exact", head: true })
+        .in("customer_id", customerIds)
+        .in("status", ["delivered", "completed"]),
+    ]);
+    if (ordersResult.error) return sendDbError(res, ordersResult.error, "Could not load your orders.");
+    if (completedResult.error) return sendDbError(res, completedResult.error, "Could not load your order summary.");
 
-    const rows = orders || [];
-    if (!rows.length) return res.json({ orders: [] });
+    const rows = ordersResult.data || [];
+    const orderSummary = {
+      totalOrders: ordersResult.count ?? rows.length,
+      completedOrders: completedResult.count ?? 0,
+    };
+    if (!rows.length) return res.json({ orders: [], ...orderSummary });
 
     const orderIds = rows.map((order) => order.id);
     const restaurantIds = [...new Set(rows.map((order) => order.restaurant_id).filter(Boolean))];
@@ -408,9 +422,10 @@ app.get("/api/my/orders", async (req, res) => {
     }
 
     return res.json({
+      ...orderSummary,
       orders: rows.map((order) => ({
         ...order,
-        restaurant_name: restaurantMap.get(String(order.restaurant_id)) || "Foodie6 order",
+        restaurant_name: restaurantMap.get(String(order.restaurant_id)) || "BiteGo order",
         items: itemMap.get(String(order.id)) || [],
       })),
     });
