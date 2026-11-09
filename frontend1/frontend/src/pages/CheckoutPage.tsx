@@ -31,8 +31,11 @@ export default function CheckoutPage({ cart, navigate, onPlaceOrder, placing, er
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [address, setAddress] = useState("");
+<<<<<<< HEAD
   const [locating, setLocating] = useState(false);
   const [locationMessage, setLocationMessage] = useState("");
+=======
+>>>>>>> origin/main
   const [paymentMethod, setPaymentMethod] = useState("khqr");
   const [promoCode, setPromoCode] = useState("");
   const [promoApplied, setPromoApplied] = useState(false);
@@ -71,6 +74,7 @@ export default function CheckoutPage({ cart, navigate, onPlaceOrder, placing, er
     if (promoCode.toUpperCase() === "KHMER10") setPromoApplied(true);
   };
 
+<<<<<<< HEAD
   // Request GPS only after the customer taps the button. Browsers require
   // HTTPS (or localhost) and the customer's explicit permission.
   const handleUseCurrentLocation = () => {
@@ -124,6 +128,8 @@ export default function CheckoutPage({ cart, navigate, onPlaceOrder, placing, er
     );
   };
 
+=======
+>>>>>>> origin/main
   const handlePlaceOrder = () => {
     if (!customerName.trim() || !customerPhone.trim() || !address.trim()) return;
     onPlaceOrder({
@@ -202,6 +208,7 @@ export default function CheckoutPage({ cart, navigate, onPlaceOrder, placing, er
                   rows={2}
                   className="w-full px-3 py-2.5 rounded-xl border border-[var(--border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 resize-none"
                 />
+<<<<<<< HEAD
                 <button
                   type="button"
                   onClick={handleUseCurrentLocation}
@@ -218,6 +225,14 @@ export default function CheckoutPage({ cart, navigate, onPlaceOrder, placing, er
                     {locationMessage}
                   </p>
                 )}
+=======
+                <button className="mt-3 text-xs font-medium text-[var(--primary)] flex items-center gap-1 hover:underline">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                  </svg>
+                  Use current location
+                </button>
+>>>>>>> origin/main
               </div>
 
               {/* Payment method */}
