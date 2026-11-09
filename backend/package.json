@@ -1,0 +1,26 @@
+{
+  "name": "foodie6-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --check index.js",
+    "start": "node index.js",
+    "dev": "node index.js",
+    "check": "node --check index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "@supabase/supabase-js": "^2.57.4",
+    "dotenv": "^17.2.2",
+    "serverless-http": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
