@@ -198,24 +198,37 @@ app.post("/api/orders", async (req, res) => {
     return res.status(409).json({ message: "The menu price or order total changed. Please review your cart and try again." });
   }
 
+  const authHeader = req.headers.authorization || "";
+  const authToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  let authenticatedUser = null;
+  if (authToken) {
+    const { data: { user }, error: userError } = await supabase.auth.getUser(authToken);
+    if (!userError && user) authenticatedUser = user;
+  }
+
   let customerId = null;
-  if (customerPhone || customerName) {
-    const lookup = customerPhone
-      ? await supabase.from("customers").select("id").eq("phone", customerPhone).maybeSingle()
+  if (customerPhone || customerName || authenticatedUser) {
+    const linkedLookup = authenticatedUser
+      ? await supabase.from("customers").select("id").eq("auth_user_id", authenticatedUser.id).maybeSingle()
       : { data: null, error: null };
+    if (linkedLookup.error) return sendDbError(res, linkedLookup.error);
+    const lookup = linkedLookup.data ? linkedLookup : (customerPhone
+      ? await supabase.from("customers").select("id").eq("phone", customerPhone).maybeSingle()
+      : { data: null, error: null });
 
     if (lookup.error) return sendDbError(res, lookup.error);
     if (lookup.data) {
       customerId = lookup.data.id;
-      if (customerName) {
-        await supabase.from("customers").update({ name: customerName }).eq("id", customerId);
+      if (customerName || authenticatedUser) {
+        await supabase.from("customers").update({ ...(customerName ? { name: customerName } : {}), ...(authenticatedUser ? { auth_user_id: authenticatedUser.id } : {}) }).eq("id", customerId);
       }
     } else {
       const created = await supabase
         .from("customers")
         .insert({
-          name: customerName || "Foodie6 Customer",
+          name: customerName || authenticatedUser?.user_metadata?.full_name || "BiteGo Customer",
           phone: customerPhone || null,
+          auth_user_id: authenticatedUser?.id || null,
         })
         .select("id")
         .single();
@@ -228,11 +241,7 @@ app.post("/api/orders", async (req, res) => {
   // Order creation must not fail solely because profile RLS is misconfigured;
   // the history endpoint will surface a clear message if the profile cannot
   // be linked.
-  const authHeader = req.headers.authorization || "";
-  const authToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  if (authToken) {
-    const { data: { user }, error: userError } = await supabase.auth.getUser(authToken);
-    if (!userError && user) {
+  if (authenticatedUser) {
       const profileDb = hasPrivilegedServerKey
         ? supabase
         : createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -242,15 +251,14 @@ app.post("/api/orders", async (req, res) => {
       const { error: profileSaveError } = await profileDb
         .from("profiles")
         .upsert({
-          id: user.id,
-          full_name: customerName || user.user_metadata?.full_name || "Foodie6 Customer",
-          email: user.email || null,
+          id: authenticatedUser.id,
+          full_name: customerName || authenticatedUser.user_metadata?.full_name || "BiteGo Customer",
+          email: authenticatedUser.email || null,
           phone: customerPhone || null,
         }, { onConflict: "id" });
       if (profileSaveError) {
         console.warn("Could not sync checkout details to customer profile:", profileSaveError.message);
       }
-    }
   }
 
   const id = orderId();
@@ -361,22 +369,13 @@ app.get("/api/my/orders", async (req, res) => {
     if (profileError) return sendDbError(res, profileError, "Could not load your profile.");
 
     const phone = String(profile?.phone || "").trim();
-    if (!phone) {
-      return res.json({
-        orders: [],
-        totalOrders: 0,
-        completedOrders: 0,
-        message: "Add your phone number to your profile and use the same number at checkout to connect your order history.",
-      });
-    }
-
-    const { data: customers, error: customerError } = await historyDb
-      .from("customers")
-      .select("id")
-      .eq("phone", phone);
+    const customerQueries = await Promise.all([
+      historyDb.from("customers").select("id").eq("auth_user_id", user.id),
+      phone ? historyDb.from("customers").select("id").eq("phone", phone) : Promise.resolve({ data: [], error: null })
+    ]);
+    const customerError = customerQueries.find(result => result.error)?.error;
     if (customerError) return sendDbError(res, customerError, "Could not find your customer record.");
-
-    const customerIds = (customers || []).map((customer) => customer.id);
+    const customerIds = [...new Set(customerQueries.flatMap(result => (result.data || []).map(customer => customer.id)))];
     if (!customerIds.length) return res.json({ orders: [], totalOrders: 0, completedOrders: 0 });
 
     const [ordersResult, completedResult] = await Promise.all([
@@ -514,6 +513,144 @@ for (const [resource, cfg] of Object.entries(crud)) {
     res.status(204).end();
   });
 }
+
+
+// Delivery staff accounts and location sharing. These routes require the
+// server-side Supabase service-role key; it is never exposed to browser code.
+async function requireDriver(req, res, next) {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!token) return res.status(401).json({ message: "Delivery staff sign-in is required." });
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) return res.status(401).json({ message: "Invalid or expired delivery session." });
+  const { data: profile } = await supabase.from("profiles").select("role,status").eq("id", user.id).maybeSingle();
+  if (!profile || profile.role !== "driver" || profile.status !== "active") {
+    return res.status(403).json({ message: "This account is not an active delivery account." });
+  }
+  req.driverUser = user;
+  return next();
+}
+
+app.post("/api/admin/drivers/create-account", requireAdmin, async (req, res) => {
+  if (!hasPrivilegedServerKey) return res.status(503).json({ message: "Configure SUPABASE_SERVICE_ROLE_KEY on the backend before creating delivery accounts." });
+  const name = String(req.body.name || "").trim();
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const password = String(req.body.password || "");
+  const phone = String(req.body.phone || "").trim();
+  const vehicle = String(req.body.vehicle || "Motorbike");
+  const plate = String(req.body.plate || "").trim();
+  if (!name || !email || password.length < 8) return res.status(400).json({ message: "Name, email, and a password of at least 8 characters are required." });
+  const { data: created, error: createError } = await supabase.auth.admin.createUser({
+    email, password, email_confirm: true, user_metadata: { full_name: name, account_type: "driver" }
+  });
+  if (createError) return res.status(400).json({ message: createError.message });
+  const userId = created.user.id;
+  const { error: profileError } = await supabase.from("profiles").upsert({
+    id: userId, full_name: name, email, phone: phone || null, role: "driver", status: "active"
+  }, { onConflict: "id" });
+  if (profileError) {
+    await supabase.auth.admin.deleteUser(userId);
+    return sendDbError(res, profileError, "Could not create the delivery profile.");
+  }
+  const { data: rider, error: riderError } = await supabase.from("drivers").insert({
+    id: userId, name, phone: phone || null, account_email: email, vehicle_type: vehicle, license_plate: plate || null, status: "offline"
+  }).select("*").single();
+  if (riderError) {
+    await supabase.from("profiles").delete().eq("id", userId);
+    await supabase.auth.admin.deleteUser(userId);
+    return sendDbError(res, riderError, "Could not create the delivery staff record.");
+  }
+  return res.status(201).json({ rider, email, message: "Delivery account created. Share the login details securely with the staff member." });
+});
+
+app.get("/api/driver/orders", requireDriver, async (req, res) => {
+  const { data, error } = await supabase.from("orders")
+    .select("id,status,total,delivery_address,created_at,customer_id,customer_latitude,customer_longitude")
+    .eq("driver_id", req.driverUser.id)
+    .in("status", ["pending", "placed", "preparing", "on_the_way"])
+    .order("created_at", { ascending: false });
+  if (error) return sendDbError(res, error);
+  const ids = (data || []).map(x => x.id);
+  const customerIds = [...new Set((data || []).map(x => x.customer_id).filter(Boolean))];
+  const [customers, locations] = await Promise.all([
+    customerIds.length ? supabase.from("customers").select("id,name,phone").in("id", customerIds) : Promise.resolve({ data: [], error: null }),
+    ids.length ? supabase.from("delivery_locations").select("order_id,latitude,longitude,updated_at").in("order_id", ids).eq("actor", "customer") : Promise.resolve({ data: [], error: null })
+  ]);
+  if (customers.error) return sendDbError(res, customers.error);
+  if (locations.error) return sendDbError(res, locations.error);
+  const cm = new Map((customers.data || []).map(c => [c.id, c]));
+  const lm = new Map((locations.data || []).map(l => [l.order_id, l]));
+  res.json((data || []).map(o => ({ ...o, customer: cm.get(o.customer_id) || null, customerLocation: lm.get(o.id) || null })));
+});
+
+app.patch("/api/driver/orders/:id/status", requireDriver, async (req, res) => {
+  const allowed = ["on_the_way", "delivered"];
+  const status = String(req.body.status || "");
+  if (!allowed.includes(status)) return res.status(400).json({ message: "Delivery staff can set an assigned order to On the Way or Delivered." });
+  const { data, error } = await supabase.from("orders").update({ status, updated_at: new Date().toISOString() })
+    .eq("id", req.params.id).eq("driver_id", req.driverUser.id).select("id,status").maybeSingle();
+  if (error) return sendDbError(res, error);
+  if (!data) return res.status(404).json({ message: "This order is not assigned to your account." });
+  res.json(data);
+});
+
+app.post("/api/driver/orders/:id/location", requireDriver, async (req, res) => {
+  const latitude = Number(req.body.latitude), longitude = Number(req.body.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+    return res.status(400).json({ message: "A valid GPS latitude and longitude are required." });
+  }
+  const { data: order, error: orderError } = await supabase.from("orders").select("id")
+    .eq("id", req.params.id).eq("driver_id", req.driverUser.id).maybeSingle();
+  if (orderError) return sendDbError(res, orderError);
+  if (!order) return res.status(404).json({ message: "This order is not assigned to your account." });
+  const { error } = await supabase.from("delivery_locations").upsert({
+    order_id: req.params.id, driver_id: req.driverUser.id, actor: "driver", latitude, longitude, updated_at: new Date().toISOString()
+  }, { onConflict: "order_id,actor" });
+  if (error) return sendDbError(res, error);
+  res.json({ ok: true });
+});
+
+app.post("/api/orders/:id/customer-location", async (req, res) => {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!token) return res.status(401).json({ message: "Sign in to share your delivery location." });
+  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+  if (authError || !user) return res.status(401).json({ message: "Invalid customer session." });
+  const latitude = Number(req.body.latitude), longitude = Number(req.body.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return res.status(400).json({ message: "Invalid GPS coordinates." });
+  const { data: customer } = await supabase.from("customers").select("id").eq("auth_user_id", user.id).maybeSingle();
+  if (!customer) return res.status(403).json({ message: "This account is not linked to a BiteGo customer record. Place an order while signed in first." });
+  const { data: order, error: orderError } = await supabase.from("orders").select("id,driver_id").eq("id", req.params.id).eq("customer_id", customer.id).maybeSingle();
+  if (orderError) return sendDbError(res, orderError);
+  if (!order) return res.status(404).json({ message: "Order not found for this customer." });
+  const { error } = await supabase.from("delivery_locations").upsert({
+    order_id: req.params.id, driver_id: order.driver_id, actor: "customer", latitude, longitude, updated_at: new Date().toISOString()
+  }, { onConflict: "order_id,actor" });
+  if (error) return sendDbError(res, error);
+  res.json({ ok: true });
+});
+
+app.get("/api/orders/:id/location", async (req, res) => {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!token) return res.status(401).json({ message: "Sign in to view live delivery locations." });
+  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+  if (authError || !user) return res.status(401).json({ message: "Invalid session." });
+  const { data: profile } = await supabase.from("profiles").select("role,phone").eq("id", user.id).maybeSingle();
+  const { data: order } = await supabase.from("orders").select("id,customer_id,driver_id").eq("id", req.params.id).maybeSingle();
+  if (!order) return res.status(404).json({ message: "Order not found." });
+  let allowed = profile?.role === "driver" && order.driver_id === user.id;
+  if (!allowed && profile?.phone) {
+    const { data: customer } = await supabase.from("customers").select("id").eq("auth_user_id", user.id).maybeSingle();
+    allowed = Boolean(customer && customer.id === order.customer_id);
+  }
+  if (!allowed) return res.status(403).json({ message: "You are not allowed to view this delivery location." });
+  const { data, error } = await supabase.from("delivery_locations")
+    .select("actor,latitude,longitude,updated_at").eq("order_id", req.params.id);
+  if (error) return sendDbError(res, error);
+  res.json(data || []);
+});
+
 
 app.get("/api/payments", requireAdmin, async (_req, res) => {
   const { data, error } = await supabase.from("payments").select("*").order("created_at", { ascending: false });

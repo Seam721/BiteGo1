@@ -31,15 +31,12 @@ export default function CheckoutPage({ cart, navigate, onPlaceOrder, placing, er
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [address, setAddress] = useState("");
-<<<<<<< HEAD
-  const [locating, setLocating] = useState(false);
-  const [locationMessage, setLocationMessage] = useState("");
-=======
->>>>>>> origin/main
   const [paymentMethod, setPaymentMethod] = useState("khqr");
   const [promoCode, setPromoCode] = useState("");
   const [promoApplied, setPromoApplied] = useState(false);
   const [step, setStep] = useState<"details" | "review">("details");
+  const [locationBusy, setLocationBusy] = useState(false);
+  const [locationMessage, setLocationMessage] = useState("");
 
   // Prefill checkout with the signed-in customer's saved details. This also
   // keeps the phone number consistent with the customer record used by order
@@ -70,66 +67,50 @@ export default function CheckoutPage({ cart, navigate, onPlaceOrder, placing, er
   const discount = promoApplied ? subtotal * 0.1 : 0;
   const total = subtotal + deliveryFee - discount;
 
+  const useCurrentLocation = () => {
+    setLocationMessage("");
+    if (!navigator.geolocation) {
+      setLocationMessage("Location is not supported by this browser. Please enter your address manually.");
+      return;
+    }
+
+    setLocationBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        const coordinateAddress = `Current location (${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)})`;
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(coords.latitude)}&lon=${encodeURIComponent(coords.longitude)}`,
+            { headers: { Accept: "application/json" } }
+          );
+          if (!response.ok) throw new Error("Address lookup unavailable");
+          const result = await response.json();
+          setAddress(result.display_name || coordinateAddress);
+          setLocationMessage("Your current location was added. Please check the delivery address before continuing.");
+        } catch {
+          setAddress(coordinateAddress);
+          setLocationMessage("Coordinates added. Please add a nearby building, street, or landmark to help the rider.");
+        } finally {
+          setLocationBusy(false);
+        }
+      },
+      (geoError) => {
+        const message = geoError.code === geoError.PERMISSION_DENIED
+          ? "Location permission was denied. Allow location access in your browser, or enter your address manually."
+          : geoError.code === geoError.TIMEOUT
+            ? "Getting your location took too long. Please try again or enter your address manually."
+            : "Unable to get your location. Please enter your address manually.";
+        setLocationMessage(message);
+        setLocationBusy(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+    );
+  };
+
   const handlePromo = () => {
     if (promoCode.toUpperCase() === "KHMER10") setPromoApplied(true);
   };
 
-<<<<<<< HEAD
-  // Request GPS only after the customer taps the button. Browsers require
-  // HTTPS (or localhost) and the customer's explicit permission.
-  const handleUseCurrentLocation = () => {
-    if (!("geolocation" in navigator)) {
-      setLocationMessage("This browser does not support location. Please enter your address manually.");
-      return;
-    }
-
-    setLocating(true);
-    setLocationMessage("Requesting your current location…");
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const latitude = position.coords.latitude;
-        const longitude = position.coords.longitude;
-        const coordinates = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
-        let readableAddress = "";
-
-        try {
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}`
-          );
-          if (response.ok) {
-            const result = await response.json();
-            readableAddress = String(result?.display_name || "").trim();
-          }
-        } catch {
-          // GPS coordinates remain usable even if the address lookup is offline.
-        }
-
-        const locationText = readableAddress
-          ? `${readableAddress} (GPS: ${coordinates})`
-          : `Current location (GPS: ${coordinates})`;
-        setAddress(locationText);
-        setLocationMessage(
-          `Location selected${position.coords.accuracy ? ` · accuracy about ${Math.round(position.coords.accuracy)} m` : ""}. Please check the address before placing your order.`
-        );
-        setLocating(false);
-      },
-      (geoError) => {
-        const message =
-          geoError.code === 1
-            ? "Location permission was denied. Allow location access in your browser, or enter your address manually."
-            : geoError.code === 2
-              ? "Your current location could not be determined. Turn on device location and try again."
-              : "Location request timed out. Please try again or enter your address manually.";
-        setLocationMessage(message);
-        setLocating(false);
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
-  };
-
-=======
->>>>>>> origin/main
   const handlePlaceOrder = () => {
     if (!customerName.trim() || !customerPhone.trim() || !address.trim()) return;
     onPlaceOrder({
@@ -205,34 +186,18 @@ export default function CheckoutPage({ cart, navigate, onPlaceOrder, placing, er
                 <textarea
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
-                  rows={2}
-                  className="w-full px-3 py-2.5 rounded-xl border border-[var(--border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 resize-none"
+                  rows={3}
+                  placeholder="House number, street, sangkat, khan, and a nearby landmark"
+                  className="w-full px-3 py-2.5 rounded-xl border border-[var(--border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 resize-y"
                 />
-<<<<<<< HEAD
-                <button
-                  type="button"
-                  onClick={handleUseCurrentLocation}
-                  disabled={locating}
-                  className="mt-3 text-xs font-medium text-[var(--primary)] flex items-center gap-1 hover:underline disabled:opacity-60 disabled:cursor-wait"
-                >
+                <button type="button" onClick={useCurrentLocation} disabled={locationBusy} className="mt-3 text-xs font-semibold text-[var(--primary)] flex items-center gap-1 hover:underline disabled:opacity-60">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
                   </svg>
-                  {locating ? "Getting your location…" : "Use current location"}
+                  {locationBusy ? "Getting your location…" : "Use my current location"}
                 </button>
-                {locationMessage && (
-                  <p role="status" aria-live="polite" className="mt-2 text-xs text-[var(--muted-foreground)]">
-                    {locationMessage}
-                  </p>
-                )}
-=======
-                <button className="mt-3 text-xs font-medium text-[var(--primary)] flex items-center gap-1 hover:underline">
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
-                  </svg>
-                  Use current location
-                </button>
->>>>>>> origin/main
+                {locationMessage && <p role="status" className="mt-2 text-xs text-[var(--muted-foreground)]">{locationMessage}</p>}
+                <p className="mt-2 text-xs text-[var(--muted-foreground)]">Your browser will ask permission before sharing your location. Please verify the address and add a landmark if needed. Address lookup © OpenStreetMap contributors.</p>
               </div>
 
               {/* Payment method */}

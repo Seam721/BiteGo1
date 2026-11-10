@@ -11,21 +11,33 @@ export default function Riders({ showToast }: { showToast: (msg: string, type?: 
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState<any | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const emptyForm = { name:"", phone:"", vehicle:"Motorbike", plate:"", status:"offline" };
+  const emptyForm = { name:"", phone:"", vehicle:"Motorbike", plate:"", status:"offline", email:"", password:"" };
   const [form, setForm] = useState(emptyForm);
   const loadRiders = async () => {
     const {data,error}=await db.riders.list();
     if(error){showToast(error.message,"error");return;}
-    setRiders((data||[]).map((x:any)=>({id:x.id,name:x.name,phone:x.phone||"",vehicle:x.vehicle_type||"",plate:x.license_plate||"",rating:Number(x.rating||0),totalDeliveries:Number(x.total_deliveries||0),activeOrders:Number(x.active_orders||0),status:String(x.status||"offline").replace(/\\b\\w/g,c=>c.toUpperCase()),joined:x.joined_at||x.created_at||"",earnings:Number(x.earnings||0)})));
+    setRiders((data||[]).map((x:any)=>({id:x.id,name:x.name,phone:x.phone||"",vehicle:x.vehicle_type||"",plate:x.license_plate||"",rating:Number(x.rating||0),totalDeliveries:Number(x.total_deliveries||0),activeOrders:Number(x.active_orders||0),status:String(x.status||"offline").replace(/\b\w/g,c=>c.toUpperCase()),joined:x.joined_at||x.created_at||"",earnings:Number(x.earnings||0)})));
   };
   const openAdd = () => { setEditItem(null); setForm(emptyForm); setShowForm(true); };
-  const openEdit = (r:any) => { setEditItem(r); setForm({name:r.name,phone:r.phone,vehicle:r.vehicle||"Motorbike",plate:r.plate||"",status:String(r.status||"Offline").toLowerCase()}); setShowForm(true); };
+  const openEdit = (r:any) => { setEditItem(r); setForm({name:r.name,phone:r.phone,vehicle:r.vehicle||"Motorbike",plate:r.plate||"",status:String(r.status||"Offline").toLowerCase(),email:"",password:""}); setShowForm(true); };
   const saveRider = async () => {
     if(!form.name.trim()){showToast("Rider name is required","error");return;}
     const payload={name:form.name.trim(),phone:form.phone.trim(),vehicle_type:form.vehicle,license_plate:form.plate.trim(),status:form.status};
-    const result=editItem ? await db.riders.update(editItem.id,payload) : await db.riders.insert(payload);
-    if(result.error){showToast(result.error.message,"error");return;}
-    await loadRiders(); setShowForm(false); setEditItem(null); showToast(editItem?"Rider updated":"Rider added","success");
+    if (!editItem) {
+      if (!form.email.trim() || form.password.length < 8) { showToast("Enter a delivery login email and a password of at least 8 characters.", "error"); return; }
+      const { data: { session } } = await (await import("../lib/supabase")).supabase.auth.getSession();
+      const apiUrl = import.meta.env.VITE_API_URL ?? "";
+      const response = await fetch(`${apiUrl}/api/admin/drivers/create-account`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+        body: JSON.stringify({ ...payload, vehicle: form.vehicle, plate: form.plate, email: form.email, password: form.password })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) { showToast(body.message || "Could not create delivery account.", "error"); return; }
+    } else {
+      const result = await db.riders.update(editItem.id,payload);
+      if(result.error){showToast(result.error.message,"error");return;}
+    }
+    await loadRiders(); setShowForm(false); setEditItem(null); showToast(editItem?"Rider updated":"Delivery account created","success");
   };
   const deleteRider = async () => {
     if(!deleteTarget)return;
@@ -49,6 +61,7 @@ export default function Riders({ showToast }: { showToast: (msg: string, type?: 
         <div>
           <h1 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 24, fontWeight: 700, color: "#1A1D23" }}>Riders</h1>
           <p style={{ color: "#6B7280", fontSize: 14, marginTop: 2 }}>{riders.length} delivery riders · {online} online now</p>
+          <p style={{ color: "#9CA3AF", fontSize: 12, marginTop: 4 }}>Delivery staff sign in at your customer website URL followed by /delivery.</p>
         </div>
         <button className="btn-primary" onClick={openAdd}><Plus size={15}/> Add Rider</button>
       </div>
@@ -146,15 +159,16 @@ export default function Riders({ showToast }: { showToast: (msg: string, type?: 
       {showForm && (
         <div className="modal-overlay" onClick={()=>setShowForm(false)}>
           <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:460}}>
-            <h3 style={{fontFamily:"'Outfit',sans-serif",fontSize:20,fontWeight:700,marginBottom:18}}>{editItem?"Edit Rider":"Add Rider"}</h3>
+            <h3 style={{fontFamily:"'Outfit',sans-serif",fontSize:20,fontWeight:700,marginBottom:18}}>{editItem?"Edit Rider":"Create Delivery Account"}</h3>
             <div style={{display:"grid",gap:12}}>
               <input className="input" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Full name"/>
+              {!editItem && <><input className="input" type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="Delivery login email"/><input className="input" type="password" autoComplete="new-password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Temporary password (8+ characters)"/></>}
               <input className="input" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="Phone"/>
               <select className="select" value={form.vehicle} onChange={e=>setForm({...form,vehicle:e.target.value})}><option>Motorbike</option><option>Bicycle</option><option>E-Bike</option></select>
               <input className="input" value={form.plate} onChange={e=>setForm({...form,plate:e.target.value})} placeholder="License plate"/>
               <select className="select" value={form.status} onChange={e=>setForm({...form,status:e.target.value})}><option value="online">Online</option><option value="offline">Offline</option></select>
             </div>
-            <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:20}}><button className="btn-secondary" onClick={()=>setShowForm(false)}>Cancel</button><button className="btn-primary" onClick={saveRider}>Save Rider</button></div>
+            <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:20}}><button className="btn-secondary" onClick={()=>setShowForm(false)}>Cancel</button><button className="btn-primary" onClick={saveRider}>{editItem ? "Save Rider" : "Create Account"}</button></div>
           </div>
         </div>
       )}

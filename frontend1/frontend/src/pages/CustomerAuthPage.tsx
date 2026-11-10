@@ -125,9 +125,19 @@ export default function CustomerAuthPage({ navigate }: Props) {
         </h1>
         <p className="mt-2 text-sm text-[var(--muted-foreground)]">
           {mode === "signin"
-            ? "Sign in to see your profile and order history."
+            ? "Sign in to view your profile and order history, or continue as a guest."
             : "Create an account to manage your profile and saved addresses."}
         </p>
+
+        {mode === "signin" && (
+          <button
+            type="button"
+            onClick={() => navigate("home")}
+            className="mt-5 w-full rounded-xl border border-[var(--primary)] bg-[var(--secondary)] px-4 py-3 text-sm font-bold text-[var(--primary)] hover:opacity-80"
+          >
+            Continue as guest — no account needed
+          </button>
+        )}
 
         {error && (
           <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">
@@ -141,7 +151,9 @@ export default function CustomerAuthPage({ navigate }: Props) {
           </p>
         )}
 
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <div className="mt-5 flex items-center gap-3 text-xs text-[var(--muted-foreground)]"><span className="h-px flex-1 bg-[var(--border)]" />{mode === "signin" ? "OR SIGN IN WITH EMAIL" : "ACCOUNT DETAILS"}<span className="h-px flex-1 bg-[var(--border)]" /></div>
+
+        <form onSubmit={handleSubmit} className="mt-5 space-y-4">
           {mode === "signup" && (
             <label className="block text-sm font-semibold">
               Full name

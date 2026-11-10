@@ -100,3 +100,10 @@ Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `admin1/.env`. Th
 ## Free deployment
 
 See [`DEPLOY_FREE.md`](./DEPLOY_FREE.md) for the step-by-step GitHub + Netlify Free setup. Render is not required. Free hosting is suitable for a demo, not a dependable live payment business.\n
+
+## Customer improvements in this package
+
+- Guest checkout is available from the customer sign-in page; an account is optional for placing an order.
+- Checkout includes permission-based current-location lookup and a manual address fallback.
+- Existing responsive layouts are retained for mobile, tablet, and desktop.
+- Payment and QR processing files are intentionally unchanged.

@@ -504,3 +504,35 @@ END $$;
 -- Set SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY) only in backend/.env (never in frontend/admin).
 -- The server uses this key for order/payment operations and validates admin JWTs
 -- before allowing any backend management endpoint.
+
+
+-- =========================
+-- BITEGO DELIVERY ACCOUNTS + TWO-WAY LIVE LOCATION
+-- =========================
+alter table public.orders add column if not exists customer_latitude double precision;
+alter table public.orders add column if not exists customer_longitude double precision;
+alter table public.drivers add column if not exists account_email text;
+
+create table if not exists public.delivery_locations (
+  id uuid primary key default gen_random_uuid(),
+  order_id text not null references public.orders(id) on delete cascade,
+  driver_id uuid references public.drivers(id) on delete set null,
+  actor text not null check (actor in ('driver','customer')),
+  latitude double precision not null check (latitude between -90 and 90),
+  longitude double precision not null check (longitude between -180 and 180),
+  updated_at timestamptz not null default now(),
+  unique(order_id, actor)
+);
+
+create index if not exists idx_delivery_locations_order on public.delivery_locations(order_id);
+create index if not exists idx_orders_driver_status on public.orders(driver_id, status);
+
+-- Location records are accessed through the trusted backend only. Do not grant
+-- anon/authenticated direct table access; backend service role bypasses RLS.
+alter table public.delivery_locations enable row level security;
+revoke all on public.delivery_locations from anon, authenticated;
+
+alter table public.customers add column if not exists auth_user_id uuid references auth.users(id) on delete set null;
+create unique index if not exists idx_customers_auth_user_id on public.customers(auth_user_id) where auth_user_id is not null;
+
+grant all on public.delivery_locations to service_role;

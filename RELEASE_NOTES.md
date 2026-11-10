@@ -37,3 +37,8 @@ The existing checkout, KHQR page, API client, backend payment routes, and ABA/AC
 - A TypeScript check is not an end-to-end integration test. The live Supabase project, Auth roles, RLS policies, bank QR ownership, and real bank transfer process must be verified using the owner's credentials and staging environment.
 - The supplied bank QR images are static and payment acceptance is manual. This project does not independently verify incoming transfers with ABA, ACLEDA, or WING.
 - Free hosting tiers are appropriate for a portfolio/demo, not dependable production payment processing. Read `DEPLOY_FREE.md` before launch.
+
+
+## November 2026 — Delivery accounts and live tracking
+
+See `DELIVERY_LIVE_TRACKING_UPDATE.md`. Adds admin-created delivery accounts, order-to-rider assignment, `/delivery` portal, two-way location sharing, customer order-history account linking, and browser notification opt-in. Existing payment flow is preserved.

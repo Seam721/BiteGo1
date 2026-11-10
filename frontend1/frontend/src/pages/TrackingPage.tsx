@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Page } from "../data";
 import { Order, fetchOrder } from "../lib/api";
+import { supabase } from "../lib/supabase";
 
 interface Props {
   navigate: (page: Page) => void;
@@ -65,6 +66,12 @@ export default function TrackingPage({ navigate, order }: Props) {
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [locations, setLocations] = useState<Array<{actor:string;latitude:number;longitude:number;updated_at:string}>>([]);
+  const [locationMessage, setLocationMessage] = useState("");
+  const [notificationMessage, setNotificationMessage] = useState("");
+  const [customerSharing, setCustomerSharing] = useState(false);
+  const customerWatchId = useRef<number | null>(null);
+  const lastCustomerSent = useRef(0);
 
   useEffect(() => {
     setLiveOrder(order);
@@ -103,7 +110,12 @@ export default function TrackingPage({ navigate, order }: Props) {
 
         if (!active) return;
 
-        setLiveOrder(freshOrder);
+        setLiveOrder(previous => {
+          if (previous?.status && freshOrder.status !== previous.status && "Notification" in window && Notification.permission === "granted") {
+            new Notification("BiteGo order update", { body: `Your order is now ${freshOrder.status.replaceAll("_", " ")}.` });
+          }
+          return freshOrder;
+        });
         setIsLive(true);
         setError("");
         setLastUpdated(Date.now());
@@ -153,6 +165,70 @@ export default function TrackingPage({ navigate, order }: Props) {
       }
     };
   }, [order?.id, liveOrder?.status]);
+
+  useEffect(() => {
+    if (!order?.id) return;
+    let active = true;
+    const loadLocations = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const response = await fetch(`${import.meta.env.VITE_API_URL ?? ""}/api/orders/${encodeURIComponent(order.id)}/location`, {
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (active) setLocations(data || []);
+      } catch { /* location is an optional live feature */ }
+    };
+    void loadLocations();
+    const timer = window.setInterval(loadLocations, 5000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [order?.id]);
+
+  function shareCustomerLocation() {
+    if (!order?.id) return;
+    if (customerWatchId.current !== null) {
+      navigator.geolocation.clearWatch(customerWatchId.current);
+      customerWatchId.current = null;
+      setCustomerSharing(false);
+      setLocationMessage("Live location sharing stopped.");
+      return;
+    }
+    if (!navigator.geolocation) { setLocationMessage("GPS is not supported on this device."); return; }
+    setLocationMessage("Requesting location permission…");
+    customerWatchId.current = navigator.geolocation.watchPosition(async position => {
+      const now = Date.now();
+      if (now - lastCustomerSent.current < 5000) return;
+      lastCustomerSent.current = now;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const response = await fetch(`${import.meta.env.VITE_API_URL ?? ""}/api/orders/${encodeURIComponent(order.id)}/customer-location`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+          body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.message || "Could not share your location.");
+        setCustomerSharing(true);
+        setLocationMessage("Your live location is being shared with the assigned delivery person.");
+      } catch (e) { setLocationMessage(e instanceof Error ? e.message : "Could not share location."); }
+    }, err => {
+      if (customerWatchId.current !== null) navigator.geolocation.clearWatch(customerWatchId.current);
+      customerWatchId.current = null; setCustomerSharing(false);
+      setLocationMessage(err.message || "Please allow location access in your browser settings.");
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
+  }
+
+  useEffect(() => () => {
+    if (customerWatchId.current !== null && navigator.geolocation) navigator.geolocation.clearWatch(customerWatchId.current);
+  }, []);
+
+  async function enableNotifications() {
+    if (!("Notification" in window)) { setNotificationMessage("Notifications are not supported by this browser."); return; }
+    const permission = await Notification.requestPermission();
+    setNotificationMessage(permission === "granted" ? "Order notifications are enabled on this device." : "Notifications were not allowed. You can change this in browser/site settings.");
+    if (permission === "granted") new Notification("BiteGo notifications enabled", { body: "We can notify you about order updates while this site is permitted to send notifications." });
+  }
 
   const currentOrder = liveOrder;
   const status = currentOrder?.status;
@@ -301,24 +377,17 @@ export default function TrackingPage({ navigate, order }: Props) {
             <h2 className="font-bold mb-2">Live delivery location</h2>
 
             <p className="text-sm text-[var(--muted-foreground)]">
-              {status === "on_the_way"
-                ? "Your order is on the way. A live map will be available when the assigned rider's GPS location is connected."
-                : "The live delivery map becomes relevant when your order is on the way."}
+              See your assigned delivery person's GPS position when they start sharing it. You can also share your drop-off location with the rider.
             </p>
-
-            <div className="mt-4 rounded-xl bg-[var(--muted)] p-4 flex items-center gap-3">
-              <span className="text-2xl">📍</span>
-              <div>
-                <p className="font-semibold text-sm">
-                  {status === "on_the_way"
-                    ? "Waiting for rider GPS"
-                    : "Location not available yet"}
-                </p>
-                <p className="text-xs text-[var(--muted-foreground)] mt-1">
-                  No simulated coordinates are displayed.
-                </p>
-              </div>
-            </div>
+            {locations.filter(x => x.actor === "driver").map(point => <div key="driver" className="mt-4 overflow-hidden rounded-xl border">
+              <iframe title="Live delivery person location" className="w-full h-64" loading="lazy" src={`https://www.openstreetmap.org/export/embed.html?bbox=${point.longitude-0.006}%2C${point.latitude-0.004}%2C${point.longitude+0.006}%2C${point.latitude+0.004}&layer=mapnik&marker=${point.latitude}%2C${point.longitude}`}/>
+              <p className="p-2 text-xs text-[var(--muted-foreground)]">Delivery person's last location update: {new Date(point.updated_at).toLocaleTimeString()}</p>
+            </div>)}
+            {!locations.some(x => x.actor === "driver") && <div className="mt-4 rounded-xl bg-[var(--muted)] p-4 text-sm">Waiting for the delivery person to share GPS location.</div>}
+            <button type="button" onClick={shareCustomerLocation} className="mt-4 w-full rounded-xl bg-[var(--primary)] text-white p-3 font-semibold">{customerSharing ? "Stop sharing my live location" : "Share my live location with delivery person"}</button>
+            {locationMessage && <p className="mt-2 text-xs text-[var(--muted-foreground)]" role="status">{locationMessage}</p>}
+            <button type="button" onClick={enableNotifications} className="mt-3 w-full rounded-xl border border-[var(--border)] p-3 font-semibold">Enable order notifications</button>
+            {notificationMessage && <p className="mt-2 text-xs text-[var(--muted-foreground)]" role="status">{notificationMessage}</p>}
           </section>
         </>
       )}

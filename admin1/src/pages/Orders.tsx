@@ -32,6 +32,7 @@ type Order = {
   date: string;
   payment: string;
   rider: string | null;
+  riderId?: string | null;
   address?: string;
 };
 
@@ -117,6 +118,7 @@ export default function Orders({
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<string | null>(null);
+  const [riderOptions, setRiderOptions] = useState<any[]>([]);
 
   const perPage = 6;
 
@@ -131,6 +133,8 @@ export default function Orders({
         return;
       }
 
+      const { data: riderRows } = await db.riders.list();
+      setRiderOptions(riderRows || []);
       const mapped: Order[] = (data || []).map((x: any) => ({
         id: String(x.id ?? ""),
         customer: x.customers?.name || "Unknown",
@@ -147,6 +151,7 @@ export default function Orders({
           : "",
         payment: prettyStatus(x.payments?.[0]?.method || ""),
         rider: x.drivers?.name || null,
+        riderId: x.driver_id || null,
         address: x.delivery_address || "",
       }));
 
@@ -188,6 +193,15 @@ export default function Orders({
     );
 
     showToast("Order status updated.", "success");
+  };
+
+  const assignRider = async (orderId: string, driverId: string) => {
+    const { error } = await db.orders.update(orderId, { driver_id: driverId || null });
+    if (error) { showToast(error.message, "error"); return; }
+    const rider = riderOptions.find((item: any) => String(item.id) === driverId);
+    setLiveOrders(rows => rows.map(row => row.id === orderId ? { ...row, rider: rider?.name || null, riderId: driverId || null } : row));
+    setSelectedOrder(row => row?.id === orderId ? { ...row, rider: rider?.name || null, riderId: driverId || null } : row);
+    showToast("Delivery person assigned.", "success");
   };
 
   const filtered = liveOrders.filter((order) => {
@@ -804,6 +818,11 @@ export default function Orders({
                 Payment: {selectedOrder.payment || "—"} · Rider:{" "}
                 {selectedOrder.rider || "Not assigned"}
               </div>
+              <label style={{display:"block",fontSize:12,fontWeight:700,color:"#6B7280",marginTop:12}}>ASSIGN DELIVERY STAFF</label>
+              <select className="select" style={{width:"100%",marginTop:6}} value={selectedOrder.riderId || ""} onChange={event=>void assignRider(selectedOrder.id,event.target.value)}>
+                <option value="">Unassigned</option>
+                {riderOptions.map((r:any)=><option key={r.id} value={r.id}>{r.name} {r.phone ? `· ${r.phone}` : ""}</option>)}
+              </select>
 
               {selectedOrder.address && (
                 <div style={{ fontSize: 13, color: "#6B7280", marginTop: 5 }}>

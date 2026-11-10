@@ -93,9 +93,15 @@ Do not include trailing slashes. Trigger a new backend deploy after changing the
 - Confirm public catalog read policies and private order/payment policies are correct.
 - The backend needs `SUPABASE_SERVICE_ROLE_KEY` to create payment records under the current RLS design.
 
+## Customer access and delivery location
+
+- Customers can choose **Continue as guest** from the customer sign-in page and place an order without creating an account. Guest orders still use the same backend order-creation endpoint and can proceed to the existing KHQR or cash-on-delivery flow. Guest customers do not get account-based order history until they sign in.
+- Customers can use **Use my current location** on checkout. The browser asks for permission; after approval, BiteGo attempts to turn the GPS coordinates into a readable address. If address lookup is unavailable, coordinates are inserted and the customer should add a nearby building, street, or landmark.
+- Location access requires HTTPS (Netlify provides HTTPS) and explicit browser permission. The customer should verify the delivery address before submitting.
+
 ## Payment flow — intentionally unchanged
 
-The checkout/payment implementation was not redesigned for deployment. ABA, ACLEDA and WING QR selection, the five-minute payment attempt, expiry/retry, manual admin acceptance and order tracking remain the existing flow. The supplied QR images are static merchant QR images; the app does not automatically verify a bank transfer. Admin must independently confirm the actual incoming transfer in the merchant account before accepting it. A QR scan, screenshot or customer claim is not proof of payment.
+The checkout/payment implementation was not redesigned. ABA, ACLEDA and WING QR selection, the five-minute payment attempt, expiry/retry, manual admin acceptance and order tracking remain the existing flow. The supplied QR images are static merchant QR images; the app does not automatically verify a bank transfer. Admin must independently confirm the actual incoming transfer in the merchant account before accepting it. A QR scan, screenshot or customer claim is not proof of payment.
 
 ## Build validation note
 

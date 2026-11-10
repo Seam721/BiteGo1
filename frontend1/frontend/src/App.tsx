@@ -15,6 +15,7 @@ import KHQRPage from "./pages/KHQRPage";
 import TrackingPage from "./pages/TrackingPage";
 import ProfilePage from "./pages/ProfilePage";
 import CustomerAuthPage from "./pages/CustomerAuthPage";
+import DeliveryPortal from "./pages/DeliveryPortal";
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("home");
@@ -153,6 +154,9 @@ export default function App() {
       setPlacingOrder(false);
     }
   };
+
+  // Delivery staff use a dedicated responsive portal on /delivery.
+  if (window.location.pathname === "/delivery") return <DeliveryPortal />;
 
   const renderPage = () => {
     switch (currentPage) {
